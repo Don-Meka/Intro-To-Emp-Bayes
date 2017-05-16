@@ -1,0 +1,120 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Now we will compute **credible interval** with the addition of uncertainty to our estimation.
+
+```{r}
+library(dplyr)
+library(tidyr)
+```
+
+```{r}
+shooting <- nba_2016 %>%
+  filter(FGA > 0) %>%
+  mutate(FGN = FGA - FGM, average = FGM/FGA) %>%
+  dplyr::select(Player, Team, PS, FGM, FGN, FGA, average)
+
+shooting_eb <- shooting %>%
+  mutate(eb_estimate = ((FGM + alpha0) / (FGA + alpha0 + beta0)))
+
+
+
+# from chapter 3
+alpha0 <- 39.23353 
+beta0 <- 48.72738 
+```
+
+the eb_estimate is called the **point estimate**
+
+Remember back in chapter 1 there was an example of a player going 15/20 from the field and their interval was updated. Let's do this for all players.
+
+```{r}
+shooting_eb <- shooting_eb %>%
+  mutate(alpha1 = alpha0 + FGM, beta1 = beta0 + FGN)
+```
+
+My current favorite team is the Caveliers (I'm a LeBron fan) so lets look at the beta distributions of the Cavs starting linup.
+
+```{r}
+cavs <- c("irving,kyrie", "smith,j.r.", "james,lebron", "love,kevin", "thompson,tristan")
+
+
+shooting_cavs <- shooting_eb %>%
+  filter(Player %in% cavs) %>%
+  crossing(x = seq(.3, .6, .0002)) %>%
+  mutate(density = dbeta(x, alpha1, beta1))
+
+
+ggplot(shooting_cavs, aes(x, density, color = Player)) +
+  geom_line() +
+  stat_function(fun = function(x) dbeta(x, alpha0, beta0),
+                lty = 2, color = "black") +
+  labs(x = "Shooting Average", color = "Cavs Players")
+```
+
+Those are the probibility distributions of field goal averages for each of the Cavs starters after updating based on their performance in the 2015/2016 season. From my experience watching Cavs games, this graph matches up to what is expected.
+
+Tristian Thompson plays the center position so nearly all of his shots are high percentage. He also takes the fewest shots by far because they don't really run plays for him. He just gets offensive rebounds and puts the ball back up. That's why his distribution is is spread so wide and at a hgih percentage.
+
+Kevin Love and J.R. Smith take a lot of 3-pointers so their averages are lower. Kevin takes more shots taht J.R. too especially in the first quater.
+
+Lebron and Kyrie both take the most shots and shoot from a variety of spots be it 3-pointers or driving to the basket. They also play the most minutes and take the most shots so their distributions are very narrow.
+
+Next is the **credible interval** for my favorite player, LeBron James. The creible interval in which 95% (or any percentage of your choosing) of the posterior distribution lies. The qbeta (quantile of beta) function calculates this with the posterior alpha1 and beta1 parameters.
+
+```{r}
+lebron <- shooting_cavs %>%
+  filter(Player == "james,lebron")
+
+lebron_pred <- lebron %>%
+  mutate(cumulative = pbeta(x, alpha1, beta1)) %>% # probibility distributions of beta
+  filter(cumulative > .025, cumulative < .975) # filter only those that are within the range
+
+lebron_low <- qbeta(.025, lebron$alpha1[1], lebron$beta1[1])
+lebron_high <- qbeta(.975, lebron$alpha1[1], lebron$beta1[1])
+
+lebron %>%
+  ggplot(aes(x, density)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = 0, ymax = density), data = lebron_pred,
+              alpha = .25, fill = "red") +
+  stat_function(fun = function(x) dbeta(x, alpha0, beta0),
+                lty = 2, color = "black") +
+  geom_errorbarh(aes(xmin = lebron_low, xmax = lebron_high, y = 0), height = 3.5, color = "red") +
+  xlim(.3, .6)
+
+```
+
+Instead of plotting all of those credible intervals on the same graph, lets just get the upper and lower bounds of the 95% interval for each player
+
+
+```{r}
+shooting_cavs <- shooting_cavs %>%
+  mutate(low = qbeta(.025, alpha1, beta1),
+  high = qbeta(.975, alpha1, beta1))
+
+shooting_cavs %>%
+  dplyr::select(Player, low, high) %>%
+  distinct() %>%
+  knitr::kable()
+
+```
+
+
+
+```{r}
+shooting_cavs %>%
+  mutate(name = reorder(Player, eb_estimate)) %>%
+  ggplot(aes(eb_estimate, name)) +
+  geom_point() +
+  geom_errorbarh(aes(xmin = low, xmax = high)) +
+  geom_vline(xintercept = alpha0 / (alpha0 + beta0), color = "red", lty = 2) +
+  xlab("Estimated Field Goal Average with 95% Confidence Interval") +
+  ylab("Cavs Players")
+```
+
+
+
+

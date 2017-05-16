@@ -1,0 +1,117 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+The book proposes a situation in which you compare two proportions. 4/10 and 300/1000. 4/10 is obviously higher. However, what if this was a real world scenario in which theses were batting averages? 4/10 is a higher average, but that's very little evidence to go off of. This chapter focuses on a method of esimating a large number of proportions called **empirical Bayes estimation**.
+
+To repeat, 0/1 is not the same as 0/1000. 2/4 is not the same as 50/100. We will use the beta distribution fit to make better estimates of each proportion. The book uses baseball data, but I will again be using basketball.
+
+Instead of guessing what alpha and beta are, we will actually calculate them.
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(Lahman)
+```
+
+```{r}
+shooting <- nba_2016 %>%
+  filter(FGA > 0) %>%
+  mutate(FGN = FGA - FGM, average = FGM/FGA) %>%
+  dplyr::select(Player, Team, PS, FGM, FGN, FGA, average)
+
+head(shooting)
+```
+
+
+Let's look at the players with teh lowest and highest fieldgoal averages
+```{r}
+# lowest average
+head(shooting[order(shooting$average),])
+
+# highest average
+head(shooting[order(shooting$average, decreasing = TRUE),])
+```
+
+The players with the lowest averages never even reached double diget attempts. Aside from Deandre Jordan, the players with the highest average also took very few attemps. That isn't enough data to make a legitimate estimation compared to players who took hundreds of shots. If you are coaching the Warriors, you aren't going to draw up plays for Ognjen Kuzmic (whom I've never heard of) When you have Stephen Curry on your team.
+
+Step 1 is estimating the prior from all the data. We need to estimate the beta prior using the data. Typically for Bayesian approches, priors are decided ahead of time. However, this is **empirical Bayes** which is an **approximation** of to exact Bayesian methods. If we have enough data (in this situation, I'm assuming there's enough), then it will still work out.
+
+
+```{r}
+# subset to players with more sufficient data
+shooting_filtered <- shooting[shooting$FGA >=100, ]
+hist(shooting_filtered$average, breaks = 50)
+```
+
+We need to get the hyperparamaters, ??~0~, ??~0~. We will fit the parameters using maximum likelihood.
+
+```{r}
+library(stats4)
+
+ll <- function(alpha, beta) {
+  x <- shooting_filtered$FGM
+  total <- shooting_filtered$FGA
+  -sum(VGAM::dbetabinom.ab(x, total, alpha, beta, log = TRUE))
+}
+
+# maximum likeliehood estimation
+m <- mle(ll, start = list(alpha = 1, beta = 10), method = "L-BFGS-B", lower = c(0.0001, .1))
+
+
+alpha0 <- coef(m)[1]
+beta0 <- coef(m)[2]
+
+alpha0
+beta0
+```
+
+The VGAM package is for Vector Generalized Linear and Additive Models.
+
+```{r}
+data.frame(x = seq(0, 1, .01), y = dbeta(seq(0, 1, .01), alpha0, beta0)) %>%
+  ggplot(., aes(x = x)) +
+  geom_line(aes(y = y)) +
+  xlim(0, 1) +
+  xlab('Field Goal Percentage') +
+  ylab('Density of Beta')
+
+cat('mean =', alpha0 /(alpha0 + beta0))
+```
+
+Now with the we will use the alpha0 and beta0 to make new empirical bayes estimates of players' averages.
+
+```{r}
+shooting_eb <- shooting %>%
+  mutate(eb_estimate = ((FGM + alpha0) / (FGA + alpha0 + beta0)))
+```
+
+```{r}
+# lowest average
+head(shooting_eb[order(shooting_eb$eb_estimate),])
+
+# highest average
+head(shooting_eb[order(shooting_eb$eb_estimate, decreasing = TRUE),])
+```
+
+The list of players with the worst eb_estimateated shooting averages is completely different than the original list of raw averages. The players with the highest averages is also completely different aside from DeAndre Jordan who is well known for almost exclusively taking high percentage shots (dunks). The list of top players is much mroe accurate to the list of players you would hear about on NBA talk shows. Its full of highly skilled and exprienced centers and power fowards. I beleive that's reason enough to confirm that the empirical bayes estimation works.
+
+```{r}
+ggplot(shooting_eb, aes(average, eb_estimate, color = FGA)) +
+  geom_hline(yintercept = alpha0 / (alpha0 + beta0), color = "red", lty = 2) +
+  geom_point() +
+  geom_abline(color = "red") +
+  scale_colour_gradient(trans = "log", breaks = 10 ^ (1:3)) +
+  xlab("Field Goal Average") +
+  ylab("Empirical Bayes Field Goal Average")
+```
+
+The horizontal dashed line is the mean
+the solid red line is fildgoal average equals the empirical bayes estimate. Poitns closer to the line did not get shrunk much at all. **shrinkage** is hte process of moving all estimates closer towards the average. Points move more when there is more evidence.
+
+
+
+
+

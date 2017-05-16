@@ -1,0 +1,152 @@
+---
+title: "Chapter 5: Hypothesis testing and FDR"
+output: html_notebook
+---
+
+
+We are going to demonstrate the **false discovery rate control** (FDR)
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+NBA_2016 <- read_csv("~/Emekas Documents/R-Directory/NBA 2016.csv")
+
+```
+
+##5.1  setting up the data
+```{r}
+shooting <- NBA_2016 %>%
+  filter(FGA > 0) %>%
+  mutate(FGN = FGA - FGM, average = FGM/FGA) %>%
+  dplyr::select(Player, Team, PS, FGM, FGN, FGA, average)
+
+# from chapter 3
+alpha0 <- 39.23353 
+beta0 <- 48.72738 
+
+shooting_eb <- shooting %>%
+  mutate(eb_estimate = ((FGM + alpha0) / (FGA + alpha0 + beta0)),
+         alpha1 = alpha0 + FGM, 
+         beta1 = beta0 + FGN)
+
+shooting_eb <- shooting_eb %>%
+  mutate(alpha1 = alpha0 + FGM, beta1 = beta0 + FGN)
+```
+
+##5.2   Posterior Error Probabilities
+The book proposes a hypothetical situation in shich the Hall of Fame requires all players to have a batting average of .3. For my example, I'm just going to chose .47. It really doesn't matter. It's arbitrary. The point is going through the process.
+
+Even with our eb_estimates, we aren't 100% sure every player with above .47 field goal average actually has a .47 field goal average. Lets take LeBron James for example.
+
+```{r}
+shooting_eb %>%
+  filter(Player == "james,lebron") %>%
+  do(data_frame(x = seq(.3, .6, .0002),
+                density = dbeta(x, .$alpha1, .$beta1))) %>%
+  ggplot(aes(x, density)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = 0, ymax = density * (x < .47)),
+              alpha = .1, fill = "red") +
+  geom_vline(color = "red", lty = 2, xintercept = .47) +
+  labs(x = "field goal average")
+```
+Even though LeBron's average even after the eb estimate is .48, there is still a chance taht he does not belong in the "hall of game." (BTW, this is a bad way of determining who is a Hall of Fame player for a sport like basketball where your fielg goal percentage heavily depends on your position)
+
+The probibility that he does not belong in the hall of fame is called the **Posterior Error Probibility** or PEP.
+
+Lets calculate this for every player.
+```{r}
+shooting_eb <- shooting_eb %>%
+  mutate(PEP = pbeta(.47, alpha1, beta1))
+```
+
+
+Heres a histogram of the PEP's of all players
+```{r}
+ggplot(shooting_eb, aes(PEP)) +
+    geom_histogram(binwidth = .05) +
+    xlab("Posterior Error Probability (PEP)")
+```
+So so most players are definitely not hall of fame players. Those are the ones in towards the right of the historgram. Some are 50/50 (the ones i nthe middle). Some are definitely hall of fame players like DeAndre Jordan and other centers based on the silly criteria I have set up. Those are the players towards the left close to or on 0.00.
+
+The PEP is closely related to the emprical bayes estimated average. The higher the estimated average, the lower the probibility of having an average as low as .47 (or whatever amount you choose). It's not a 1-to-1 relationship though because some playesr have wider distributions than others based on the number of shots they took. So it also depends on the alpha + beta denominator.
+
+```{r}
+shooting_eb %>%
+    ggplot(aes(eb_estimate, PEP, color = FGA)) +
+    geom_point(size = 1) +
+    xlab("(Shrunken) field goal average estimate") +
+    ylab("Posterior Error Probability (PEP)") +
+    geom_vline(color = "red", lty = 2, xintercept = .47) +
+    scale_colour_gradient(trans = "log", breaks = 10 ^ (1:5))
+```
+
+Notice the relationship between at field goal attemts and PEP. Players who took fewer shots still have a chance of having a true field goal percentage above .47. This is because there is very little evidence proving otherwise. Players with more shots (mroe evidence) are more stuck where they are though.
+
+
+##5.3   False Discovery Rate
+In this example, we want to include as many players as we can into the hall of fame with fewer than 5% of the players not being derserving of hall of fame status. so a 5% error rate or "there's a 95% chance that each player in the hall of fame actually deserves to be there." However you wannt word it. This is **false discovery rate control**.
+
+```{r}
+by_PEP <- shooting_eb %>%
+  arrange(PEP) %>%
+  mutate(rank = row_number()) %>%
+  dplyr::select(rank, Player, PS, FGM, FGA, eb_estimate, PEP)
+
+by_PEP %>%
+  head(10) %>%
+  knitr::kable(booktabs = TRUE)
+```
+Those are the players most deserving of hall of fame status. All centers and power forwards of course. The ones with 0.00 are 100% desrving of it.
+
+
+
+```{r}
+by_PEP %>%
+  slice(90:100) %>%
+  knitr::kable(booktabs = TRUE)
+```
+These are the 90 to 100th ranked players. Now the probibility of them not being hall of fame has increased to 40%. That's a reasonable percentage chance taht youd second guess their hall of fame status. Also notice that small forwards and shooting gaurds are finally in the mix. Not that it really matters for this example.
+
+Lets take the top 100 players and see what the probibility is of that player being a false positive.
+```{r}
+top_players <- shooting_eb %>%
+arrange(PEP) %>%
+head(100)
+
+sum(top_players$PEP)
+mean(top_players$PEP)
+```
+This means that about 12 players of the top 100 arent deserving of being in the hall of fame. We don't know which ones exactly arent hall of fame though.
+
+
+##5.4 Q-values
+We could experiment with many thresholds to get our desired FDR for each. But it's even easier just to compute them all thresholds at once, by computing the cumulative mean of all the (sorted) posterior error probabilities. This cumulative mean is called a **q-value**.
+
+```{r}
+shooting_eb <- shooting_eb %>%
+  arrange(PEP) %>%
+  mutate(qvalue = cummean(PEP))
+
+hall_of_fame <- shooting_eb %>%
+  filter(qvalue < .05)
+
+strict_hall_of_fame <- shooting_eb %>%
+  filter(qvalue < .01)
+```
+controlling at the .05 mark creates a hall of fame with 71 players (5% chance a player isn't desrving of hall of fame status). Controlling at the .01 mark creates a hall of fame with only 41 players (1% chance a player isn't deserving of hall of fame status).
+
+```{r}
+library(scales)
+
+shooting_eb %>%
+  filter(qvalue < .47) %>%
+  ggplot(aes(qvalue, rank(PEP))) +
+  geom_line() +
+  scale_x_continuous(labels = percent_format()) +
+  xlab("q-value threshold") +
+  ylab("Number of players included at this threshold")
+```
+This graph shows that you could include 250 players in the hall of fame, but about half of them would be false positives. On hte opposite end, you could only include about 30 players and be 100% sure they belong. Or just go somewhere inbetween. It's up to you to make that decision.
+
+
