@@ -1,2 +1,1 @@
-# Intro-To-Imp-Bayes
-Working through Introduction to Imperical Bayes
+I'm working through the book Introduction to Imperical Bayes. The r notebook files aren't cleaned up to be presented. its more just notes that I'm taking as I go through the book. I'll update it and this readme as I go through it.
