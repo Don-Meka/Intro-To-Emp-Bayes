@@ -1,5 +1,5 @@
 ---
-title: "R Notebook"
+title: "Chapyer 3: Empirical Bayes Estimation"
 output: html_notebook
 ---
 

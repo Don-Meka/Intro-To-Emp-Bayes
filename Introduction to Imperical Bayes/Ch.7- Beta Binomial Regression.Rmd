@@ -1,0 +1,166 @@
+---
+title: "Chapter 7: Beta Binomial Regression"
+output: html_notebook
+---
+
+This chapter introduces the situation in sports in which better players are given more chances at bat (or for my version, more shots). So there is a relationship between my FGA variable and the true FG%. We will use **beta-binomial regression** to adjust for this.
+##7.1  setting up the 
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(readr)
+NBA_2016 <- read_csv("~/Emekas Documents/R-Directory/NBA 2016.csv")
+```
+
+```{r}
+shooting <- NBA_2016 %>%
+  filter(FGA > 0) %>%
+  mutate(FGN = FGA - FGM, average = FGM/FGA) %>%
+  dplyr::select(Player, Team, PS, FGM, FGN, FGA, average)
+
+# from chapter 3
+alpha0 <- 39.23353 
+beta0 <- 48.72738
+prior_mu <- (alpha0) / (alpha0 + beta0)
+
+shooting_eb <- shooting %>%
+  mutate(eb_estimate = ((FGM + alpha0) / (FGA + alpha0 + beta0)),
+         alpha1 = alpha0 + FGM, 
+         beta1 = beta0 + FGN)
+
+shooting_eb <- shooting_eb %>%
+  mutate(alpha1 = alpha0 + FGM, beta1 = beta0 + FGN)
+```
+
+```{r}
+shooting %>%
+  filter(FGA >= 10) %>%
+  ggplot(aes(FGA, average)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_x_log10() +
+  labs(x = "Field Goal Attempts", 
+       y = "Raw Field Goal Average")
+```
+Notice that the players with the lowest number of attempts have the most varience. That's because there is less information on their averages. Also notice that field goal average tends to increase as field goal attempts increases. Better players play more. Better players take more shots. Obviously, there are more variables to this (like position), but were just going to look at the the field goal attempts for now.
+
+```{r}
+shooting_eb %>%
+  filter(FGA >= 10) %>%
+  gather(type, value, average, eb_estimate) %>%
+  mutate(type = plyr::revalue(type, c(average = "Raw",
+                                      eb_estimate = "With EB Shrinkage"))) %>%
+  ggplot(aes(FGA, value)) +
+  geom_point() +
+  scale_x_log10() +
+  geom_hline(color = "red", lty = 2, size = 1.5, yintercept = prior_mu) +
+  facet_wrap(~type) +
+  ylab("Field Goal Average") +
+  geom_smooth(method = "lm")
+```
+This graph shows how the Bayes shrinkage affects the FG% estimates. The red dashed line is the prior average. Notice tahat it is too high for players with lower FGAs. WIth the EB estimation, those players get closer to the average. Players with higher FGAs dont move much at all with EB estimation.
+
+```{r}
+median_lt_20 <- shooting_eb %>%
+  filter(FGA >= 10, FGA <= 20) %>%
+  summarize(average = median(FGM / FGA))
+```
+
+##7.2 Accounting for AB (FGA) in the model
+We need to set up a model in which FGA affects the mean FG%.
+
+##7.3 Fit the model across all players
+First step is to set the prior parameters u0, u(FGA), and sigma0. We will do so by using a maximum liklihood approach.
+
+```{r}
+library(gamlss)
+fit <- gamlss(cbind(FGM, FGA - FGM) ~ log(FGA),
+              data = shooting_eb,
+              family = BB(mu.link = "identity"))
+```
+
+bring out the coefficients...
+```{r}
+library(broom)
+
+td <- tidy(fit)
+td
+```
+```{r}
+mu_0 <- td$estimate[1]
+mu_FGA <- td$estimate[2]
+sigma <- exp(td$estimate[3])
+```
+
+mu(0) = .341
+mu(FGA) = .017
+sigma (with log-link) = exp(-4.457) = .012
+
+So now the new prior beta distribution for a player depends on the value of of FGA. Here are some example of the different distributions.
+```{r}
+crossing(x = seq(0.1, .7, .001), FGA = c(100, 400, 700, 1000, 1500)) %>%
+  mutate(density = dbeta(x, (mu_0 + mu_FGA * log(FGA)) / sigma,
+                         (1 - (mu_0 + mu_FGA * log(FGA))) / sigma)) %>%
+  mutate(AB = factor(FGA)) %>%
+  ggplot(aes(x, density, color = FGA, group = FGA)) +
+  geom_line() +
+  xlab("Batting average") +
+  ylab("Prior density")
+```
+The example in the book is much better
+
+## Estimate each player's average using this prior
+instead of using a single alpha0 and beta0 values as the prior, we chose the prior based on their number of FGA. Then we update the FGM and FGA like before. We need to update mu and sigma. Well in this example, sigma is the same regardless. However, that may not be the case in more complex models.
+
+```{r}
+mu <- fitted(fit, parameter = "mu")
+sigma <- fitted(fit, parameter = "sigma")
+
+head(mu)
+head(sigma)
+```
+
+Now we can calculate $\alpha_0$ and $\beta_0$ parameters for each player, according to $\alpha_{0,i}=\mu_i / \sigma_0$ and $\beta_{0,i}=(1-\mu_i) / \sigma_0$. 
+
+```{r}
+shooting_eb_wAB <- shooting_eb %>%
+  dplyr::select(Player, FGM, FGA, original_eb = eb_estimate) %>%
+  mutate(mu = mu,
+         alpha0 = mu / sigma,
+         beta0 = (1 - mu) / sigma,
+         alpha1 = alpha0 + FGM,
+         beta1 = beta0 + FGA - FGM,
+         new_eb = alpha1 / (alpha1 + beta1))
+
+ggplot(shooting_eb_wAB, aes(original_eb, new_eb, color = FGA)) +
+  geom_point() +
+  geom_abline(color = "red") +
+  xlab("Original EB Estimate") +
+  ylab("EB Estimate w/ FGA term") +
+  scale_color_continuous(trans = "log", breaks = 10 ^ (0:4))
+```
+
+```{r}
+library(tidyr)
+
+lev <- c(raw = "Raw FGM / FGA", original_eb = "EB Estimate", new_eb = "EB w/ Regression")
+
+shooting_eb_wAB %>%
+  filter(FGA >= 10) %>%
+  mutate(raw = FGM / FGA) %>%
+  gather(type, value, raw, original_eb, new_eb) %>%
+  mutate(mu = ifelse(type == "original_eb", prior_mu,
+                     ifelse(type == "new_eb", mu, NA))) %>%
+  mutate(type = factor(plyr::revalue(type, lev), lev)) %>%
+  ggplot(aes(FGA, value)) +
+  geom_point() +
+  geom_line(aes(y = mu), color = "red") +
+  scale_x_log10() +
+  facet_wrap(~type) +
+  xlab("Field Goal Attempts") +
+  ylab("Estimate")
+```
+Again, the books baseball data provides a better example than this.
+
+

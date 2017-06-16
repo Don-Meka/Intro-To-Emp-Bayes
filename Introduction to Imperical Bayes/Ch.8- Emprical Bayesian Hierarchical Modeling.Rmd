@@ -1,0 +1,155 @@
+---
+title: "Chapter 8: Empirical Bayesian Hierarchical Modeling"
+output: html_notebook
+---
+The chapter proposes a situation in which you are choosing between two batters who each have 30/100 hits. The only difference is one is left-handed and the other is right-handed. Right handed batters tend to hit better than left-handed batters. So in this chapter we are using additional factors to influence our prior distribution.
+
+
+##8.1 Setup.
+Same ish
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(readr)
+NBA_2016 <- read_csv("~/Emekas Documents/R-Directory/NBA 2016.csv")
+```
+
+```{r}
+shooting <- NBA_2016 %>%
+  filter(FGA > 0) %>%
+  mutate(FGN = FGA - FGM, average = FGM/FGA) %>%
+  dplyr::select(Player, Team, PS, FGM, FGN, FGA, average)
+
+# from chapter 3
+alpha0 <- 39.23353 
+beta0 <- 48.72738
+prior_mu <- (alpha0) / (alpha0 + beta0)
+
+shooting_eb <- shooting %>%
+  mutate(eb_estimate = ((FGM + alpha0) / (FGA + alpha0 + beta0)),
+         alpha1 = alpha0 + FGM, 
+         beta1 = beta0 + FGN)
+
+shooting_eb <- shooting_eb %>%
+  mutate(alpha1 = alpha0 + FGM, beta1 = beta0 + FGN)
+```
+
+from chapter 7 we will perform beta binomial regression using the gamlss package so mu depends on the number of shots taken.
+```{r}
+library(gamlss)
+
+fit <- gamlss(cbind(FGM, FGA - FGM) ~ log(FGA),
+              data = dplyr::select(shooting, -PS),
+              family = BB(mu.link = "identity"))
+```
+
+alpha0 and beta0 can be computed based on mu and sigma.
+```{r}
+shooting_eb <- shooting %>%
+  mutate(mu = fitted(fit, "mu"),
+         sigma = fitted(fit, "sigma"),
+         alpha0 = mu / sigma,
+         beta0 = (1 - mu) / sigma,
+         alpha1 = alpha0 + FGM,
+         beta1 = beta0 + FGA - FGM,
+         estimate = alpha1 / (alpha1 + beta1))
+```
+
+Noow we have corrected for the confounding factor of FGA.
+
+##8.2 Right-handed and Left-handed Batters
+Left handed batters tend to hit better than right-handed batters. Well, I'm using a basketball data set so I will use position (point guard, shooting guard, small foward, power foward, center) instead. position has a huge affect on FG% because centers like Deandre Jordan mostly shoot high percentage shots. Hopefully, this still works out.
+```{r}
+shooting %>%
+  count(PS)
+```
+
+relevel the factors so point guards are the baseline.
+```{r}
+shooting2 <- shooting
+shooting2$PS <- factor(shooting2$PS, levels = c("PG", "SG", "SF", "PF", "C"))
+
+fit2 <- gamlss(cbind(FGM, FGA - FGM) ~ log(FGA) + PS,
+              data = shooting2,
+              family = BB(mu.link = "identity"))
+```
+
+Now we look at the coeeficients
+```{r}
+library(broom)
+tidy(fit2)
+```
+
+Different positions have statistically significant FG%s.
+
+
+```{r}
+sigma <- fitted(fit2, "sigma")[1]
+
+crossing(PS = c("PG", "SG", "SF", "PF", "C"),
+         FGA = c(1, 10, 100, 1000, 1500)) %>%
+  augment(fit2, newdata = .) %>%
+  rename(mu = .fitted) %>%
+  crossing(x = seq(.1, .8, .0005)) %>%
+  mutate(alpha = mu / sigma,
+         beta = (1 - mu) / sigma,
+         density = dbeta(x, alpha, beta)) %>%
+  ggplot(aes(x, density, color = factor(FGA), lty = PS)) +
+  geom_line() +
+  labs(x = "Field Goal Percentage",
+       y = "Prior density",
+       color = "FGA",
+       lty = "Position")
+```
+So this doesn't really work too well with 5 different positions. So I'm going to redo this whole thing separating Guards and Forwards/Centers
+
+```{r}
+shooting3 <- shooting2
+shooting3$PS <- gsub("PG", "Guard", shooting3$PS)
+shooting3$PS <- gsub("SG", "Guard", shooting3$PS)
+shooting3$PS <- gsub("SF", "Forward", shooting3$PS)
+shooting3$PS <- gsub("PF", "Forward", shooting3$PS)
+shooting3$PS <- gsub("C", "Forward", shooting3$PS)
+shooting3$PS <- as.factor(shooting3$PS)
+
+
+shooting3 <- shooting3 %>%
+  mutate(PS = relevel(PS, "Guard"))
+
+
+fit2 <- gamlss(cbind(FGM, FGA - FGM) ~ log(FGA) + PS,
+              data = shooting3,
+              family = BB(mu.link = "identity"))
+```
+
+```{r}
+library(broom)
+tidy(fit2)
+```
+
+So forwards make shots about 5% more often than guards. It's a statistically significant difference.
+
+```{r}
+sigma <- fitted(fit2, "sigma")[1]
+
+crossing(PS = c("Guard", "Forward"),
+         FGA = c(1, 10, 100, 1000, 1500)) %>%
+  augment(fit2, newdata = .) %>%
+  rename(mu = .fitted) %>%
+  crossing(x = seq(.1, .8, .0005)) %>%
+  mutate(alpha = mu / sigma,
+         beta = (1 - mu) / sigma,
+         density = dbeta(x, alpha, beta)) %>%
+  ggplot(aes(x, density, color = factor(FGA), lty = PS)) +
+  geom_line() +
+  labs(x = "Field Goal Percentage",
+       y = "Prior density",
+       color = "FGA",
+       lty = "Position")
+```
+
+Notice that yo ucan still overcome the prior of position. The guard disributions still overlap the forward distributions. Even a guard who has only taken 1 shot can still have a higher true field goal percentage than a forward who has taken 1500 shots.
+
+The rest has to do with historical data which doesn't work with my data so read the book for that part.
+

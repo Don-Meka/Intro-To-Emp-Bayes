@@ -1,0 +1,101 @@
+---
+title: "Chapter 10: The Multinomial and Dirichlet"
+output: html_notebook
+---
+
+Sof far, the book has looked at batting average. Hits / At Bats. However, not every hit is equal. Some are home runs, some are singls. Apparently this is called the "slugging percentage" which I don't understand because I don't care for baseball. I think the basketball equivalent would be separate free throws, field goals, and 3-poitners. So I'll work with that and hopefully things will match up in away that I can still practice the methods introduced in this chapter.
+
+##10.1 Setub.
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(readr)
+NBA_2016 <- read_csv("~/Emekas Documents/R-Directory/NBA 2016.csv")
+```
+
+```{r}
+#had to change the names because they started with numbers
+colnames(NBA_2016)[8] <- "TPM"
+colnames(NBA_2016)[9] <- "TPA"
+
+shooting <- NBA_2016 %>%
+  mutate(JSM = FGM - TPM, JSA = FGA - TPA) %>%
+  select(Player, Team, PS, FTM, FTA, JSM, JSA, TPM, TPA)
+shooting
+```
+
+Now to we need to calculate teh basketball equivalent of slugging. Is there a term for that? Anyway for baseball its (singls + doublesx2 + triplesx3 + homersx4)/ at bats. in baskeball, a field goal attempt is different than three pointer attempt. So ...
+```{r}
+shooting$FTA[shooting$FTA == 0] <- 1
+shooting$JSA[shooting$JSA == 0] <- 1
+shooting$TPA[shooting$TPA == 0] <- 1
+shooting <- mutate(shooting, ballin = ((FTM/FTA) + 2*(JSM/JSA) + 3*(TPM/TPA)))
+shooting
+```
+I gave everyone with 0 shot attempts 1 to avoid division by zero. I multiplied each shot shot type by the amount of points its worth. I divided by each shot type by its individual attempts. In basketball you have more of a choice between shooting a 3 pointer and shooting a mid-range jump shot. In baseball you just hit the ball as hard as you can regardless. I wanted to penalize players for just jacking up 3-pointers when they shouldn't. 
+
+```{r}
+#shooting_gathered <- shooting %>%
+#  gather(shot_type, shot_value, -Player, -Team, -PS, -FTA, -JSA, -TPA, -ballin)
+##actually this wont work with the different denominators
+  
+a <- ggplot(shooting, aes(FTM/FTA)) +
+  geom_histogram()
+
+b <- ggplot(shooting, aes(JSM/JSA)) +
+  geom_histogram()
+
+c <- ggplot(shooting, aes(TPM/TPA)) +
+  geom_histogram()
+
+grid.arrange(a, b, c)
+```
+
+The problem here is the players with the highest ballin percentages went 1/1 from 3 and the players with the worst went 0/X from three.
+
+
+
+----------
+scratch all that. My version won't match up to the book's examples so i'll have to do differently. For the sake of matching the books examples, I won't penalize players for attempting lower percentage shots. Maybe I'll go back and do it the original way at some point, but for now, I'm just learning.
+```{r}
+shooting <- NBA_2016 %>%
+  mutate(JSM = FGM - TPM, 
+         JSA = FGA - TPA, 
+         makes = (FTA + JSM + TPM), 
+         shots = (FTA + JSA + TPA),
+         misses = (shots - makes)) %>%
+  select(Player, Team, PS, FTM, JSM, TPM, makes, misses, shots)
+
+
+shooting <- mutate(shooting, ballin = (FTM + 2*JSM + 3*TPM)/(shots))
+shooting
+```
+
+Now things match up to the book's example.The ballin variable ranges from 0 to 3. 3 means every shot taken was a 3-poitnter with 100% accuracy. Eric Moreland has the highest ballin rating of 2.0 because he attempted one jump shot and made it. jump shots are worth 2 points so there ya go. The same problem persists in that moreland has the highest rating because he only attempted one shot and it happened to go in.
+
+```{r}
+shooting_gathered <- shooting %>%
+  select(-makes) %>%
+  gather(shot_type, shot_value, -Player, -Team, -PS, -shots, -ballin) %>%
+  mutate(percent = shot_value / shots)
+  
+shot_type_order <- c("FTM", "JSM", "TPM")
+
+shooting_gathered %>%
+  mutate(shot_type = factor(shot_type, shot_type_order)) %>%
+    filter(shot_type != "misses") %>%
+  ggplot(aes(shot_value / shots)) +
+  geom_histogram() +
+  facet_wrap(~shot_type, scales = "free_y")
+```
+Notice how originally, free throws had the highest percentage, but now it's as low as three pointers. This doesn't match up to how things work in real basketball. Free throws are lower because fewer free throws are taken. So this doesn't match up to the real world, but I'll continue on for sake of following the book.
+
+##10.2 The Dirichlet-Multinomial Distribution
+
+##10.2.2 Dirichlet Distribution
+
+
+
+
+

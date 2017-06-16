@@ -1,0 +1,87 @@
+---
+title: "Chapyer 2: The Beta Distribution"
+output: html_notebook
+---
+Introduction to Empriical Bayes
+
+
+The beta explained on [Wolfram MathWorld](http://mathworld.wolfram.com/BetaDistribution.html) 
+
+To summarize, the Beta Distribution has two free parameters, alpha and beta. The distribution is used as a prior distribution for binomial proportions. The domain is [0, 1] and the rang is the density of beta. It is the probibility distribution of probibilities. It represents all possible values of a probibility when we don't know what that probibility is. The mean is alpha / (alpha + beta).
+
+The book uses data on baseball as an example and looked at batting averages. I will use data on basketball because I like that sport better.
+
+```{r}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r}
+library(readr)
+nba_2016 <- read_csv("~/Emekas Documents/R-Directory/NBA 2016.csv") %>%
+    mutate('Team' = as.factor(nba_2016$Team)) %>%
+    mutate('PS' = as.factor(nba_2016$PS))
+```
+
+The book uses alpha = 81 and beta = 219 making the mean = .27. At the time of this writting, I don't know why those numbers were picked, but here is what I will use for my example
+
+```{r}
+## alpha
+mean(nba_2016$FGM)
+
+## alpha + beta
+mean(nba_2016$FGA)
+
+## beta
+mean(nba_2016$FGA) - mean(nba_2016$FGM)
+
+## mean
+mean(nba_2016$FGM) / mean(nba_2016$FGA)
+
+
+
+```
+
+I took the mean of field goals made and field goals attempted. So alpha = 186, beta = 230, and the mean = .45. This isn't scientific, but it's acceptable for just learning.
+
+Here is my beta distribution of field goal percentatge
+```{r}
+data.frame(x = seq(0, 1, .01), y = dbeta(seq(0, 1, .01), 187, 230)) %>%
+  ggplot(., aes(x = x)) +
+  geom_line(aes(y = y)) +
+  xlim(0, 1) +
+  xlab('Field Goal Percentage') +
+  ylab('Density of Beta') 
+```
+
+The beta distribtion is appropriate for modeling the biomial distribtion. We start with a prior distribution, obtain evidence, then update it to a posterior distribution. The curve changes each time someone takes a shot.
+
+Lets say for example, a player has a good game and they go 15/20 from the field. Now alpha = (187 + 15) and beta = (230 + 5). So this is the updated beta distribution. 
+
+
+```{r}
+data.frame(x = seq(0, 1, .01), 
+           y = dbeta(seq(0, 1, .01), 187, 230), 
+           z = dbeta(seq(0, 1, .01), (187+15), (230 + 5))) %>%
+  gather(., -x, key = func, value = val) %>%
+  ggplot(., aes(x = x, y = val, group = func)) +
+    geom_line(aes(color = func), size = .8) + 
+    scale_color_manual(name="Beta params", 
+                     values=c("black", "red"),
+                     labels=c("??=187, ??=230", "??=202, ??=235")) +
+    labs(x="Field Goal Percentage", y="Density of Beta")
+```
+
+So now there is a new range of possible values for that player's possible true shooting percentage. The posterior mean equals
+
+```{r}
+## (alpha + makes) / ((alpha + makes) + (beta + misses))
+(187+15) / ((187+15) + (230 + 5))
+```
+So this good shooting performance increases this players range of possible true shooting percentages. However, it would be silly to think a player actually shoots 75% from the field based on one game.
+
+
+
+

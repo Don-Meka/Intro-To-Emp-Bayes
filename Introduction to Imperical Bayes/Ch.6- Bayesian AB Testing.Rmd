@@ -1,5 +1,5 @@
 ---
-title: "R Notebook"
+title: "Chapter 6: Bayesian A/B Testing"
 output: html_notebook
 ---
 In this chapter we will examine a situation in which we are comparing two players. One player may have a higher average, but the other player may have a more narrow spread. So their distributions may overlap showing some probibility that the palyer  with the lower average may actually have the higher true average. This is an example of **A/B testing**.
